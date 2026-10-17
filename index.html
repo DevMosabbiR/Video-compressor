@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offline Video Compressor</title>
+  <style>
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body {
+      background: #0f172a;
+      color: #f8fafc;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+    }
+    .card {
+      background: #1e293b;
+      padding: 30px;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 550px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+    }
+    h2 { margin-top: 0; text-align: center; color: #38bdf8; }
+    .upload-area {
+      border: 2px dashed #475569;
+      border-radius: 12px;
+      padding: 30px 20px;
+      text-align: center;
+      cursor: pointer;
+      margin: 20px 0;
+      transition: border-color 0.2s;
+    }
+    .upload-area:hover { border-color: #38bdf8; }
+    input[type="file"] { display: none; }
+    .settings {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    label { font-size: 14px; color: #94a3b8; }
+    select, input[type="range"] {
+      width: 100%;
+      padding: 10px;
+      background: #334155;
+      color: white;
+      border: 1px solid #475569;
+      border-radius: 8px;
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      background: #0284c7;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover:not(:disabled) { background: #0369a1; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status {
+      margin-top: 20px;
+      padding: 15px;
+      background: #0f172a;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    progress {
+      width: 100%;
+      height: 10px;
+      border-radius: 5px;
+      margin-top: 10px;
+    }
+    .download-btn {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 10px 16px;
+      background: #10b981;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      font-weight: 500;
+      text-align: center;
+    }
+    video { display: none; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>Offline Video Compressor</h2>
+  
+  <div class="upload-area" onclick="document.getElementById('videoInput').click()">
+    <p id="fileLabel">ভিডিও ফাইল সিলেক্ট করুন (MP4, WebM)</p>
+    <input type="file" id="videoInput" accept="video/*">
+  </div>
+
+  <div class="settings">
+    <div>
+      <label for="qualityPreset">কম্প্রেশন লেভেল:</label>
+      <select id="qualityPreset">
+        <option value="high">উচ্চ কোয়ালিটি (সাইজ মাঝারি কমবে - চোখে পড়ার মতো পার্থক্য থাকবে না)</option>
+        <option value="medium" selected>ব্যালান্সড (ভালো কোয়ালিটি ও প্রায় ৫০-৬০% সাইজ কমবে)</option>
+        <option value="low">সর্বোচ্চ সাইজ সেভিং (কোয়ালিটি সামান্য কমতে পারে)</option>
+      </select>
+    </div>
+  </div>
+
+  <button id="startBtn" disabled>কম্প্রেস শুরু করুন</button>
+
+  <div class="status" id="statusBox" style="display: none;">
+    <div id="statusText">প্রসেসিং হচ্ছে...</div>
+    <progress id="progressBar" value="0" max="100"></progress>
+    <div id="resultInfo" style="margin-top: 10px;"></div>
+  </div>
+
+  <video id="sourceVideo" muted></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+</div>
+
+<script>
+  const videoInput = document.getElementById('videoInput');
+  const fileLabel = document.getElementById('fileLabel');
+  const startBtn = document.getElementById('startBtn');
+  const sourceVideo = document.getElementById('sourceVideo');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const statusBox = document.getElementById('statusBox');
+  const statusText = document.getElementById('statusText');
+  const progressBar = document.getElementById('progressBar');
+  const resultInfo = document.getElementById('resultInfo');
+
+  let selectedFile = null;
+
+  videoInput.addEventListener('change', (e) => {
+    selectedFile = e.target.files[0];
+    if (selectedFile) {
+      const sizeMB = (selectedFile.size / (1024 * 1024)).toFixed(2);
+      fileLabel.innerText = `${selectedFile.name} (${sizeMB} MB)`;
+      startBtn.disabled = false;
+    }
+  });
+
+  startBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+
+    startBtn.disabled = true;
+    statusBox.style.display = 'block';
+    resultInfo.innerHTML = '';
+    statusText.innerText = 'ভিডিও লোড হচ্ছে...';
+    progressBar.value = 0;
+
+    const fileURL = URL.createObjectURL(selectedFile);
+    sourceVideo.src = fileURL;
+
+    await new Promise((resolve) => {
+      sourceVideo.onloadedmetadata = () => resolve();
+    });
+
+    canvas.width = sourceVideo.videoWidth;
+    canvas.height = sourceVideo.videoHeight;
+
+    const preset = document.getElementById('qualityPreset').value;
+    let bitrate;
+    if (preset === 'high') {
+      bitrate = 3500000; // 3.5 Mbps
+    } else if (preset === 'medium') {
+      bitrate = 2000000; // 2 Mbps
+    } else {
+      bitrate = 1000000; // 1 Mbps
+    }
+
+    const stream = canvas.captureStream(30);
+    
+    // অডিও ট্র্যাক যুক্ত করা
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const sourceNode = audioContext.createMediaElementSource(sourceVideo);
+    const destNode = audioContext.createMediaStreamDestination();
+    sourceNode.connect(destNode);
+    sourceNode.connect(audioContext.destination);
+
+    destNode.stream.getAudioTracks().forEach(track => stream.addTrack(track));
+
+    let mimeType = 'video/webm; codecs=vp9';
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = 'video/webm';
+    }
+
+    const recorder = new MediaRecorder(stream, {
+      mimeType: mimeType,
+      videoBitsPerSecond: bitrate
+    });
+
+    const chunks = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: mimeType });
+      const originalMB = (selectedFile.size / (1024 * 1024)).toFixed(2);
+      const newMB = (blob.size / (1024 * 1024)).toFixed(2);
+      const reduction = Math.round((1 - (blob.size / selectedFile.size)) * 100);
+
+      const downloadUrl = URL.createObjectURL(blob);
+      statusText.innerText = 'কম্প্রেশন সম্পন্ন হয়েছে!';
+      progressBar.value = 100;
+
+      resultInfo.innerHTML = `
+        <p>আগের সাইজ: <strong>${originalMB} MB</strong><br>
+        নতুন সাইজ: <strong>${newMB} MB</strong> (${reduction > 0 ? reduction + '% কমেছে' : 'সাইজ অপরিবর্তিত'})</p>
+        <a class="download-btn" href="${downloadUrl}" download="compressed_video.webm">ডাউনলোড করুন</a>
+      `;
+      startBtn.disabled = false;
+      audioContext.close();
+    };
+
+    recorder.start();
+    sourceVideo.play();
+
+    function drawFrame() {
+      if (!sourceVideo.paused && !sourceVideo.ended) {
+        ctx.drawImage(sourceVideo, 0, 0, canvas.width, canvas.height);
+        const progress = Math.round((sourceVideo.currentTime / sourceVideo.duration) * 100);
+        progressBar.value = progress;
+        statusText.innerText = `প্রসেসিং চলছে: ${progress}%`;
+        requestAnimationFrame(drawFrame);
+      }
+    }
+
+    sourceVideo.onended = () => {
+      recorder.stop();
+    };
+
+    drawFrame();
+  });
+</script>
+</body>
+</html>
